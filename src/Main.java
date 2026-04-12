@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -11,20 +12,21 @@ public class Main {
 
         int port = 6379;
         ExecutorService executorService = Executors.newFixedThreadPool(10);
+        ConcurrentHashMap<String,String> KeyVsValueHashmap = new ConcurrentHashMap<>();
 
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             serverSocket.setReuseAddress(true);
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                executorService.execute(() -> handleClient(clientSocket));
+                executorService.execute(() -> handleClient(clientSocket, KeyVsValueHashmap));
             }
 
         } catch (IOException e) {
             System.out.println("IOException: " + e.getMessage());
         }
     }
-    public static void handleClient(Socket client) {
+    public static void handleClient(Socket client, ConcurrentHashMap<String,String> KeyVsValueHashmap) {
 
         try (
                 Socket s = client;
@@ -64,7 +66,22 @@ public class Main {
                                 out.print("-ERR wrong number of arguments for 'echo'\r\n");
                             }
                             break;
-
+                        case "SET":
+                            if (args.length > 1) {
+                                KeyVsValueHashmap.put(args[1], args[2]);
+                                out.print("+OK\r\n");
+                            }
+                            break;
+                        case "GET":
+                            if(args.length > 1){
+                                if(KeyVsValueHashmap.containsKey(args[1])){
+                                    out.print(createBulkString(KeyVsValueHashmap.get(args[1])));
+                                }
+                                else {
+                                    out.print("-ERR No value assigned to this key.\r\n");
+                                }
+                            }
+                            break;
                         default:
                             out.print("-ERR unknown command\r\n");
                     }
