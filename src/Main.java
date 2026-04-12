@@ -12,7 +12,7 @@ public class Main {
 
         int port = 6379;
         ExecutorService executorService = Executors.newFixedThreadPool(10);
-        ConcurrentHashMap<String,String> KeyVsValueHashmap = new ConcurrentHashMap<>();
+        ConcurrentHashMap<String,ValueWithExpiry> KeyVsValueHashmap = new ConcurrentHashMap<>();
 
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             serverSocket.setReuseAddress(true);
@@ -26,7 +26,7 @@ public class Main {
             System.out.println("IOException: " + e.getMessage());
         }
     }
-    public static void handleClient(Socket client, ConcurrentHashMap<String,String> KeyVsValueHashmap) {
+    public static void handleClient(Socket client, ConcurrentHashMap<String,ValueWithExpiry> KeyVsValueHashmap) {
 
         try (
                 Socket s = client;
@@ -67,19 +67,38 @@ public class Main {
                             }
                             break;
                         case "SET":
-                            if (args.length > 1) {
-                                KeyVsValueHashmap.put(args[1], args[2]);
+                            if(args.length > 1){
+                                String key = args[1];
+                                String value = args[2];
+
+                                long ExpiryTime = -1;
+                                if(args.length >= 5 && args[3].equalsIgnoreCase("PX")){
+                                    long px = Long.parseLong(args[4]);
+                                    ExpiryTime = System.currentTimeMillis() + px;
+                                }
+                                KeyVsValueHashmap.put(key, new ValueWithExpiry(value, ExpiryTime));
                                 out.print("+OK\r\n");
                             }
                             break;
                         case "GET":
-                            if(args.length > 1){
-                                if(KeyVsValueHashmap.containsKey(args[1])){
-                                    out.print(createBulkString(KeyVsValueHashmap.get(args[1])));
+                            if (args.length >= 2) {
+                                String key = args[1];
+
+                                ValueWithExpiry entry = KeyVsValueHashmap.get(key);
+
+                                if (entry == null) {
+                                    out.print("$-1\r\n");
+                                    break;
                                 }
-                                else {
-                                    out.print("-ERR No value assigned to this key.\r\n");
+
+                                if (entry.expiryTime != -1 && System.currentTimeMillis() > entry.expiryTime) {
+                                    KeyVsValueHashmap.remove(key);
+                                    break;
                                 }
+
+                                out.print(createBulkString(entry.value));
+                            } else {
+                                out.print("-ERR wrong number of arguments for 'get'\r\n");
                             }
                             break;
                         default:
