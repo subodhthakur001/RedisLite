@@ -1,6 +1,10 @@
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -119,7 +123,53 @@ public class Main {
                             } else {
                                 out.print("-ERR wrong number of arguments for 'rpush'\r\n");
                             }
-                            break;    
+                            break;
+                        case "LRANGE":
+                            if (args.length >= 4) {
+                                String listName = args[1];
+                                int start = Integer.parseInt(args[2]);
+                                int stop = Integer.parseInt(args[3]);
+
+                                List<String> list = listMap.get(listName);
+
+                                if (list == null) {
+                                    out.print("*0\r\n");
+                                    break;
+                                }
+
+                                int size = list.size();
+
+                                if (start < 0) start = size + start;
+                                if (stop < 0) stop = size + stop;
+
+                                if (start < 0) start = 0;
+                                if (stop >= size) stop = size - 1;
+
+                                if (start > stop || start >= size) {
+                                    out.print("*0\r\n");
+                                    break;
+                                }
+
+                                StringBuilder response = new StringBuilder();
+                                int count = stop - start + 1;
+
+                                response.append("*").append(count).append("\r\n");
+
+                                for (int i = start; i <= stop; i++) {
+                                    String val = list.get(i);
+                                    response.append("$")
+                                            .append(val.length())
+                                            .append("\r\n")
+                                            .append(val)
+                                            .append("\r\n");
+                                }
+
+                                out.print(response.toString());
+
+                            } else {
+                                out.print("-ERR wrong number of arguments for 'lrange'\r\n");
+                            }
+                            break;
                         default:
                             out.print("-ERR unknown command\r\n");
                     }
