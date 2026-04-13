@@ -13,20 +13,23 @@ public class Main {
         int port = 6379;
         ExecutorService executorService = Executors.newFixedThreadPool(10);
         ConcurrentHashMap<String,ValueWithExpiry> KeyVsValueHashmap = new ConcurrentHashMap<>();
+        HashMap<String, List<String>> listMap = new HashMap<>();
 
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             serverSocket.setReuseAddress(true);
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                executorService.execute(() -> handleClient(clientSocket, KeyVsValueHashmap));
+                executorService.execute(() -> handleClient(clientSocket, KeyVsValueHashmap,listMap));
             }
 
         } catch (IOException e) {
             System.out.println("IOException: " + e.getMessage());
         }
     }
-    public static void handleClient(Socket client, ConcurrentHashMap<String,ValueWithExpiry> KeyVsValueHashmap) {
+    public static void handleClient(Socket client, 
+                                   ConcurrentHashMap<String,ValueWithExpiry> KeyVsValueHashmap,
+                                   HashMap<String, List<String>> listMap) {
 
         try (
                 Socket s = client;
@@ -101,6 +104,25 @@ public class Main {
                                 out.print("-ERR wrong number of arguments for 'get'\r\n");
                             }
                             break;
+                        case "RPUSH":
+                            if(args.length >= 3){
+                                String listName = args[1];
+                                String value = args[2];
+                                if(listMap.containsKey(listName)){
+                                    List<String> existingList = listMap.get(listName);
+                                    existingList.add(value);
+                                    out.print(":" + listMap.get(listName).size() + "\r\n");
+                                }
+                                else {
+                                    List<String> list = new ArrayList<>();
+                                    String newlistName = args[1];
+                                    String element = args[2];
+                                    list.add(element);
+                                    listMap.put(newlistName, list);
+                                    out.print(":" + listMap.get(newlistName).size() + "\r\n");
+                                }
+                            }
+                            break;    
                         default:
                             out.print("-ERR unknown command\r\n");
                     }
