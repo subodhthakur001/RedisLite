@@ -106,21 +106,18 @@ public class Main {
                             break;
                         case "RPUSH":
                             if(args.length >= 3){
-                                String listName = args[1];
-                                String value = args[2];
-                                if(listMap.containsKey(listName)){
-                                    List<String> existingList = listMap.get(listName);
-                                    existingList.add(value);
-                                    out.print(":" + listMap.get(listName).size() + "\r\n");
-                                }
-                                else {
-                                    List<String> list = new ArrayList<>();
-                                    String newlistName = args[1];
-                                    String element = args[2];
-                                    list.add(element);
-                                    listMap.put(newlistName, list);
-                                    out.print(":" + listMap.get(newlistName).size() + "\r\n");
-                                }
+                                 String listName = args[1];
+                                 List<String> list = listMap.computeIfAbsent(
+                                    listName,
+                                    k -> Collections.synchronizedList(new ArrayList<>())
+                                    );
+                                 for (int i = 2; i < args.length; i++) {
+                                    list.add(args[i]);
+                                    }
+                                
+                                 out.print(":" + list.size() + "\r\n");
+                            } else {
+                                out.print("-ERR wrong number of arguments for 'rpush'\r\n");
                             }
                             break;    
                         default:
