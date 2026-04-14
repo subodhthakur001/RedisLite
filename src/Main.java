@@ -170,6 +170,43 @@ public class Main {
                                 out.print("-ERR wrong number of arguments for 'lrange'\r\n");
                             }
                             break;
+                        case "LPUSH":
+                            if(args.length >= 3){
+                                String listname = args[1];
+                                List<String> list = listMap.computeIfAbsent(
+                                        listname,
+                                        k -> Collections.synchronizedList(new ArrayList<>())
+                                );
+                                for (int i = 2; i < args.length; i++) {
+                                    list.add(args[i]);
+                                }
+                                Collections.reverse(list);
+                                out.print(":" + list.size() + "\r\n");
+                            } else {
+                                out.print("-ERR wrong number of arguments for 'rpush'\r\n");
+                            }
+                            break;
+                        case "LLEN":
+                            if(args.length >1){
+                                String key = args[1];
+//                                List<String> existingList = listMap.get(key);
+                                List<String> existingList = listMap.get(key);
+                                if(existingList != null){
+                                    out.print(":" + listMap.get(key).size() + "\r\n");
+                                }
+                                else{
+                                    out.print(":0" + "\r\n");
+                                }
+                            }
+                            break;
+                        case "LPOP":
+                            if(args.length > 1){
+                                String listName = args[1];
+                                List<String> existingList = listMap.get(listName);
+                                if(existingList != null) out.print(createBulkString(existingList.removeFirst()));
+                                else out.print("$-1\r\n");
+                            }
+                            break;
                         default:
                             out.print("-ERR unknown command\r\n");
                     }
