@@ -187,7 +187,7 @@ public class Main {
                             }
                             break;
                         case "LLEN":
-                            if(args.length >1){
+                            if(args.length > 2){
                                 String key = args[1];
 //                                List<String> existingList = listMap.get(key);
                                 List<String> existingList = listMap.get(key);
@@ -200,11 +200,48 @@ public class Main {
                             }
                             break;
                         case "LPOP":
-                            if(args.length > 1){
+                            if (args.length >= 2) {
                                 String listName = args[1];
-                                List<String> existingList = listMap.get(listName);
-                                if(existingList != null) out.print(createBulkString(existingList.removeFirst()));
-                                else out.print("$-1\r\n");
+                                List<String> list = listMap.get(listName);
+
+                                if (list == null || list.isEmpty()) {
+                                    if (args.length == 3) {
+                                        out.print("*0\r\n"); // empty array
+                                    } else {
+                                        out.print("$-1\r\n"); // null bulk
+                                    }
+                                    break;
+                                }
+
+                                // ✅ Case 1: LPOP key (single element)
+                                if (args.length == 2) {
+                                    String val = list.remove(0);
+                                    out.print(createBulkString(val));
+                                }
+
+                                // ✅ Case 2: LPOP key count
+                                else if (args.length == 3) {
+                                    int count = Integer.parseInt(args[2]);
+
+                                    int actualCount = Math.min(count, list.size());
+
+                                    StringBuilder response = new StringBuilder();
+                                    response.append("*").append(actualCount).append("\r\n");
+
+                                    for (int i = 0; i < actualCount; i++) {
+                                        String val = list.remove(0);
+                                        response.append("$")
+                                                .append(val.length())
+                                                .append("\r\n")
+                                                .append(val)
+                                                .append("\r\n");
+                                    }
+
+                                    out.print(response.toString());
+                                }
+
+                            } else {
+                                out.print("-ERR wrong number of arguments for 'lpop'\r\n");
                             }
                             break;
                         default:
