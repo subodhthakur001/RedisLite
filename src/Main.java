@@ -11,257 +11,266 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 
 public class Main {
+
+    static ConcurrentHashMap<String, ValueWithExpiry> kvStore = new ConcurrentHashMap<>();
+    static ConcurrentHashMap<String, List<String>> listMap = new ConcurrentHashMap<>();
+    static ConcurrentHashMap<String, Object> locks = new ConcurrentHashMap<>();
+
     public static void main(String[] args) {
         System.out.println("Server started on port 6379...");
 
-        int port = 6379;
-        ExecutorService executorService = Executors.newFixedThreadPool(10);
-        ConcurrentHashMap<String,ValueWithExpiry> KeyVsValueHashmap = new ConcurrentHashMap<>();
-        HashMap<String, List<String>> listMap = new HashMap<>();
+        ExecutorService executor = Executors.newFixedThreadPool(10);
 
-        try (ServerSocket serverSocket = new ServerSocket(port)) {
-            serverSocket.setReuseAddress(true);
-
+        try (ServerSocket serverSocket = new ServerSocket(6379)) {
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                executorService.execute(() -> handleClient(clientSocket, KeyVsValueHashmap,listMap));
+                Socket client = serverSocket.accept();
+                executor.execute(() -> handleClient(client));
             }
-
         } catch (IOException e) {
-            System.out.println("IOException: " + e.getMessage());
+            e.printStackTrace();
         }
     }
-    public static void handleClient(Socket client, 
-                                   ConcurrentHashMap<String,ValueWithExpiry> KeyVsValueHashmap,
-                                   HashMap<String, List<String>> listMap) {
 
+    public static void handleClient(Socket client) {
         try (
-                Socket s = client;
-                BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream()));
-                PrintWriter out = new PrintWriter(s.getOutputStream(), true)
+                BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
+                PrintWriter out = new PrintWriter(client.getOutputStream(), true)
         ) {
-            String message;
 
-            while ((message = in.readLine()) != null) {
+            String line;
 
-                // RESP array starts with *
-                if (message.startsWith("*")) {
+            while ((line = in.readLine()) != null) {
 
-                    int numArgs = Integer.parseInt(message.substring(1));
-                    String[] args = new String[numArgs];
+                if (!line.startsWith("*")) break;
 
-                    // Read all arguments
-                    for (int i = 0; i < numArgs; i++) {
-                        in.readLine();           // skip $length
-                        args[i] = in.readLine(); // actual value
+                int n = Integer.parseInt(line.substring(1));
+                String[] args = new String[n];
+
+                for (int i = 0; i < n; i++) {
+                    in.readLine(); // skip $len
+                    args[i] = in.readLine();
+                }
+
+                String cmd = args[0].toUpperCase();
+
+                switch (cmd) {
+
+                    case "PING":
+                        out.print("+PONG\r\n");
+                        break;
+
+                    case "ECHO":
+                        out.print(createBulkString(args[1]));
+                        break;
+
+                    case "SET": {
+                        String key = args[1];
+                        String val = args[2];
+
+                        long expiry = -1;
+
+                        if (args.length >= 5 && args[3].equalsIgnoreCase("PX")) {
+                            long px = Long.parseLong(args[4]);
+                            expiry = System.currentTimeMillis() + px;
+                        }
+
+                        kvStore.put(key, new ValueWithExpiry(val, expiry));
+                        out.print("+OK\r\n");
+                        break;
                     }
 
-                    // Debug (optional)
-                    // System.out.println("Received: " + Arrays.toString(args));
+                    case "GET": {
+                        String key = args[1];
+                        ValueWithExpiry v = kvStore.get(key);
 
-                    String command = args[0].toUpperCase();
-
-                    switch (command) {
-                        case "PING":
-                            out.print("+PONG\r\n");
+                        if (v == null) {
+                            out.print("$-1\r\n");
                             break;
+                        }
 
-                        case "ECHO":
-                            if (args.length > 1) {
-                                out.print(createBulkString(args[1]));
-                            } else {
-                                out.print("-ERR wrong number of arguments for 'echo'\r\n");
+                        if (v.expiryTime != -1 && System.currentTimeMillis() > v.expiryTime) {
+                            kvStore.remove(key);
+                            out.print("$-1\r\n");
+                            break;
+                        }
+
+                        out.print(createBulkString(v.value));
+                        break;
+                    }
+
+                    case "RPUSH": {
+                        String key = args[1];
+                        Object lock = locks.computeIfAbsent(key, k -> new Object());
+
+                        synchronized (lock) {
+                            List<String> list = listMap.computeIfAbsent(key, k -> new ArrayList<>());
+
+                            for (int i = 2; i < args.length; i++) {
+                                list.add(args[i]);
                             }
-                            break;
-                        case "SET":
-                            if(args.length > 1){
-                                String key = args[1];
-                                String value = args[2];
 
-                                long ExpiryTime = -1;
-                                if(args.length >= 5 && args[3].equalsIgnoreCase("PX")){
-                                    long px = Long.parseLong(args[4]);
-                                    ExpiryTime = System.currentTimeMillis() + px;
-                                }
-                                KeyVsValueHashmap.put(key, new ValueWithExpiry(value, ExpiryTime));
-                                out.print("+OK\r\n");
+                            lock.notifyAll();
+                            out.print(":" + list.size() + "\r\n");
+                        }
+                        break;
+                    }
+
+                    case "LPUSH": {
+                        String key = args[1];
+                        Object lock = locks.computeIfAbsent(key, k -> new Object());
+
+                        synchronized (lock) {
+                            List<String> list = listMap.computeIfAbsent(key, k -> new ArrayList<>());
+
+                            for (int i = 2; i < args.length; i++) {
+                                list.add(0, args[i]); // insert at front
                             }
-                            break;
-                        case "GET":
-                            if (args.length >= 2) {
-                                String key = args[1];
 
-                                ValueWithExpiry entry = KeyVsValueHashmap.get(key);
-
-                                if (entry == null) {
-                                    out.print("$-1\r\n");
-                                    break;
-                                }
-
-                                if (entry.expiryTime != -1 && System.currentTimeMillis() > entry.expiryTime) {
-                                    KeyVsValueHashmap.remove(key);
-                                    break;
-                                }
-
-                                out.print(createBulkString(entry.value));
-                            } else {
-                                out.print("-ERR wrong number of arguments for 'get'\r\n");
+                            lock.notifyAll();
+                            out.print(":" + list.size() + "\r\n");
+                        }
+                        break;
+                    }
+                    case "LLEN":
+                        if(args.length >1){
+                            String key = args[1];
+                            List<String> existingList = listMap.get(key);
+                            if(existingList != null){
+                                out.print(":" + listMap.get(key).size() + "\r\n");
                             }
-                            break;
-                        case "RPUSH":
-                            if(args.length >= 3){
-                                 String listName = args[1];
-                                 List<String> list = listMap.computeIfAbsent(
-                                    listName,
-                                    k -> Collections.synchronizedList(new ArrayList<>())
-                                    );
-                                 for (int i = 2; i < args.length; i++) {
-                                    list.add(args[i]);
-                                    }
-                                
-                                 out.print(":" + list.size() + "\r\n");
-                            } else {
-                                out.print("-ERR wrong number of arguments for 'rpush'\r\n");
+                            else{
+                                out.print(":0" + "\r\n");
                             }
+                        }
+                        break;
+                    case "LRANGE": {
+                        String key = args[1];
+                        int start = Integer.parseInt(args[2]);
+                        int stop = Integer.parseInt(args[3]);
+
+                        List<String> list = listMap.get(key);
+                        if (list == null) {
+                            out.print("*0\r\n");
                             break;
-                        case "LRANGE":
-                            if (args.length >= 4) {
-                                String listName = args[1];
-                                int start = Integer.parseInt(args[2]);
-                                int stop = Integer.parseInt(args[3]);
+                        }
 
-                                List<String> list = listMap.get(listName);
+                        int size = list.size();
 
-                                if (list == null) {
+                        if (start < 0) start += size;
+                        if (stop < 0) stop += size;
+
+                        start = Math.max(0, start);
+                        stop = Math.min(size - 1, stop);
+
+                        if (start > stop) {
+                            out.print("*0\r\n");
+                            break;
+                        }
+
+                        StringBuilder res = new StringBuilder();
+                        res.append("*").append(stop - start + 1).append("\r\n");
+
+                        for (int i = start; i <= stop; i++) {
+                            res.append(createBulkString(list.get(i)));
+                        }
+
+                        out.print(res.toString());
+                        break;
+                    }
+
+                    case "LPOP":
+                        if (args.length >= 2) {
+                            String key = args[1];
+                            List<String> list = listMap.get(key);
+
+                            if (args.length == 3) {
+                                int count = Integer.parseInt(args[2]);
+
+                                if (list == null || list.isEmpty()) {
                                     out.print("*0\r\n");
                                     break;
                                 }
 
-                                int size = list.size();
+                                int actual = Math.min(count, list.size());
 
-                                if (start < 0) start = size + start;
-                                if (stop < 0) stop = size + stop;
+                                StringBuilder res = new StringBuilder();
+                                res.append("*").append(actual).append("\r\n");
 
-                                if (start < 0) start = 0;
-                                if (stop >= size) stop = size - 1;
-
-                                if (start > stop || start >= size) {
-                                    out.print("*0\r\n");
-                                    break;
-                                }
-
-                                StringBuilder response = new StringBuilder();
-                                int count = stop - start + 1;
-
-                                response.append("*").append(count).append("\r\n");
-
-                                for (int i = start; i <= stop; i++) {
-                                    String val = list.get(i);
-                                    response.append("$")
+                                for (int i = 0; i < actual; i++) {
+                                    String val = list.remove(0);
+                                    res.append("$")
                                             .append(val.length())
                                             .append("\r\n")
                                             .append(val)
                                             .append("\r\n");
                                 }
 
-                                out.print(response.toString());
+                                out.print(res.toString());
+                            }
 
-                            } else {
-                                out.print("-ERR wrong number of arguments for 'lrange'\r\n");
-                            }
-                            break;
-                        case "LPUSH":
-                            if(args.length >= 3){
-                                String listname = args[1];
-                                List<String> list = listMap.computeIfAbsent(
-                                        listname,
-                                        k -> Collections.synchronizedList(new ArrayList<>())
-                                );
-                                for (int i = 2; i < args.length; i++) {
-                                    list.add(args[i]);
-                                }
-                                Collections.reverse(list);
-                                out.print(":" + list.size() + "\r\n");
-                            } else {
-                                out.print("-ERR wrong number of arguments for 'rpush'\r\n");
-                            }
-                            break;
-                        case "LLEN":
-                            if(args.length > 2){
-                                String key = args[1];
-//                                List<String> existingList = listMap.get(key);
-                                List<String> existingList = listMap.get(key);
-                                if(existingList != null){
-                                    out.print(":" + listMap.get(key).size() + "\r\n");
-                                }
-                                else{
-                                    out.print(":0" + "\r\n");
-                                }
-                            }
-                            break;
-                        case "LPOP":
-                            if (args.length >= 2) {
-                                String listName = args[1];
-                                List<String> list = listMap.get(listName);
-
+                            else {
                                 if (list == null || list.isEmpty()) {
-                                    if (args.length == 3) {
-                                        out.print("*0\r\n"); // empty array
-                                    } else {
-                                        out.print("$-1\r\n"); // null bulk
-                                    }
+                                    out.print("$-1\r\n");
+                                } else {
+                                    out.print(createBulkString(list.remove(0)));
+                                }
+                            }
+
+                        } else {
+                            out.print("-ERR wrong number of arguments for 'lpop'\r\n");
+                        }
+                        break;
+
+                    case "BLPOP": {
+                        String key = args[1];
+                        int timeout = Integer.parseInt(args[2]);
+
+                        Object lock = locks.computeIfAbsent(key, k -> new Object());
+
+                        synchronized (lock) {
+                            long end = timeout == 0 ? Long.MAX_VALUE :
+                                    System.currentTimeMillis() + timeout * 1000L;
+
+                            while (true) {
+                                List<String> list = listMap.get(key);
+
+                                if (list != null && !list.isEmpty()) {
+                                    String val = list.remove(0);
+                                    out.print(createArrayResponse(key, val));
                                     break;
                                 }
 
-                                // ✅ Case 1: LPOP key (single element)
-                                if (args.length == 2) {
-                                    String val = list.remove(0);
-                                    out.print(createBulkString(val));
+                                long remaining = end - System.currentTimeMillis();
+                                if (remaining <= 0) {
+                                    out.print("*-1\r\n");
+                                    break;
                                 }
 
-                                // ✅ Case 2: LPOP key count
-                                else if (args.length == 3) {
-                                    int count = Integer.parseInt(args[2]);
-
-                                    int actualCount = Math.min(count, list.size());
-
-                                    StringBuilder response = new StringBuilder();
-                                    response.append("*").append(actualCount).append("\r\n");
-
-                                    for (int i = 0; i < actualCount; i++) {
-                                        String val = list.remove(0);
-                                        response.append("$")
-                                                .append(val.length())
-                                                .append("\r\n")
-                                                .append(val)
-                                                .append("\r\n");
-                                    }
-
-                                    out.print(response.toString());
-                                }
-
-                            } else {
-                                out.print("-ERR wrong number of arguments for 'lpop'\r\n");
+                                lock.wait(remaining);
                             }
-                            break;
-                        default:
-                            out.print("-ERR unknown command\r\n");
+                        }
+                        break;
                     }
 
-                    out.flush();
-                } else {
-                    // Invalid protocol → close connection
-                    break;
+                    default:
+                        out.print("-ERR unknown command\r\n");
                 }
+
+                out.flush();
             }
 
-        } catch (IOException e) {
-            System.out.println("Client disconnected: " + e.getMessage());
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
+    private static String createBulkString(String s) {
+        return "$" + s.length() + "\r\n" + s + "\r\n";
+    }
 
-    private static String createBulkString(String response) {
-        return "$" + response.length() + "\r\n" + response + "\r\n";
+    private static String createArrayResponse(String key, String val) {
+        return "*2\r\n" +
+                "$" + key.length() + "\r\n" + key + "\r\n" +
+                "$" + val.length() + "\r\n" + val + "\r\n";
     }
 }
