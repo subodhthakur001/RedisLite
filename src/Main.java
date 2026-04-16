@@ -228,8 +228,9 @@ public class Main {
                         Object lock = locks.computeIfAbsent(key, k -> new Object());
 
                         synchronized (lock) {
-                            long end = timeout == 0 ? Long.MAX_VALUE :
-                                    System.currentTimeMillis() + timeout * 1000L;
+
+                            long timeoutMillis = (long)(timeout * 1000);
+                            long start = System.currentTimeMillis();
 
                             while (true) {
                                 List<String> list = listMap.get(key);
@@ -240,7 +241,14 @@ public class Main {
                                     break;
                                 }
 
-                                long remaining = end - System.currentTimeMillis();
+                                if (timeout == 0) {
+                                    lock.wait();
+                                    continue;
+                                }
+
+                                long elapsed = System.currentTimeMillis() - start;
+                                long remaining = timeoutMillis - elapsed;
+
                                 if (remaining <= 0) {
                                     out.print("*-1\r\n");
                                     break;
