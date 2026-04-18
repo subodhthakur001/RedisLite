@@ -259,6 +259,18 @@ public class Main {
                         }
                         break;
                     }
+                    case "TYPE": {
+                        String key = args[1];
+                        ValueWithExpiry obj = kvStore.get(key);
+                        if(obj != null){
+                            out.print("+string\r\n");
+                        }
+                        else {
+                            out.print("+none\r\n");
+                        }
+
+                        break;
+                    }
 
                     default:
                         out.print("-ERR unknown command\r\n");
